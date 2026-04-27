@@ -3,6 +3,7 @@
   
   "vid": "YOUR_WR_VID_HERE",
   "skey": "YOUR_WR_SKEY_HERE",
+  "rt": "YOUR_WR_RT_HERE",
   
   "output_format": "markdown",
   "output_dir": "/root/workspace/weread-notes",

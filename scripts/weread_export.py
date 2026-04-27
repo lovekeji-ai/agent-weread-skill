@@ -6,9 +6,12 @@
 
 import json
 import os
+import re
+import shutil
 import ssl
 import sys
 import argparse
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -40,6 +43,13 @@ _bootstrap_preferred_python()
 
 import requests
 
+from weread_auth import ensure_auth, qr_login
+
+
+class AuthExpired(Exception):
+    """微信读书 cookie 失效，需要重新鉴权。"""
+
+
 class WeReadExporter:
     """微信读书导出器"""
 
@@ -50,7 +60,8 @@ class WeReadExporter:
     REVIEW_LIST_URL = 'https://weread.qq.com/web/review/list'
 
     def __init__(self, config_path=None):
-        self.config = self._load_config(config_path)
+        self.config_path = self._resolve_config_path(config_path)
+        self.config = self._load_config(self.config_path)
         self.vid = self.config.get('vid')
         self.skey = self.config.get('skey')
         self.session = requests.Session()
@@ -64,11 +75,14 @@ class WeReadExporter:
         if not self.vid or not self.skey:
             raise ValueError("Missing vid or skey in config")
     
+    @staticmethod
+    def _resolve_config_path(config_path):
+        if config_path:
+            return os.path.abspath(config_path)
+        return str(Path(__file__).resolve().parent.parent / 'config' / 'weread.json')
+
     def _load_config(self, config_path):
         """加载配置"""
-        if not config_path:
-            config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'weread.json')
-        
         if os.path.exists(config_path):
             with open(config_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -87,16 +101,31 @@ class WeReadExporter:
         """发送 API 请求"""
         cookies = {
             'wr_vid': self.vid,
-            'wr_skey': self.skey
+            'wr_skey': self.skey,
         }
-        
+        if self.config.get('rt'):
+            cookies['wr_rt'] = self.config['rt']
+
         try:
             response = self.session.get(url, cookies=cookies, params=params, timeout=30)
-            response.raise_for_status()
-            return response.json()
         except Exception as e:
             print(f"❌ API 请求失败: {e}")
             return None
+
+        if response.status_code in (401, 403):
+            raise AuthExpired(f"HTTP {response.status_code} on {url}")
+
+        try:
+            data = response.json()
+        except ValueError:
+            print(f"❌ API 返回非 JSON，status={response.status_code}")
+            return None
+
+        err_code = data.get('errCode') if isinstance(data, dict) else None
+        if err_code in (-2010, -2012, -2013, -12013):
+            raise AuthExpired(f"errCode={err_code} on {url}")
+
+        return data
     
     def _get_shelf_data(self):
         """获取完整书架数据"""
@@ -157,6 +186,17 @@ class WeReadExporter:
             payload.setdefault('sort', book.get('sort'))
             return payload
         return book or {}
+
+    @staticmethod
+    def _safe_filename(name, fallback='Untitled'):
+        """清理跨平台不安全字符；避免隐藏文件、空名、超长名。"""
+        if not name:
+            return fallback
+        cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]', '-', name).strip().strip('.')
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        if not cleaned:
+            return fallback
+        return cleaned[:120]
 
     def _is_within_days(self, item, since_days=None):
         """按 createTime 过滤最近 N 天的数据；无 createTime 时保留。"""
@@ -220,20 +260,35 @@ class WeReadExporter:
 
 """
         
-        # 添加标注
+        # 添加标注（按章节分组，章节内按 chapterIdx + range 自然排序）
         if highlights:
             md_content += "## 💡 标注\n\n"
+
+            grouped = OrderedDict()
             for h in highlights:
-                chapter = h.get('chapterTitle', '未知章节')
-                content = h.get('markText', '')
-                thought = h.get('thought', '')
-                
+                chapter = h.get('chapterTitle') or '未知章节'
+                grouped.setdefault(chapter, []).append(h)
+
+            def _sort_key(h):
+                rng = h.get('range') or ''
+                start = 0
+                if isinstance(rng, str) and '-' in rng:
+                    head, _, _ = rng.partition('-')
+                    try:
+                        start = int(head)
+                    except ValueError:
+                        start = 0
+                return (h.get('chapterIdx') or 0, start, h.get('createTime') or 0)
+
+            for chapter, items in grouped.items():
                 md_content += f"### {chapter}\n\n"
-                md_content += f"> {content}\n\n"
-                
-                if thought:
-                    md_content += f"💭 **想法**: {thought}\n\n"
-                
+                for h in sorted(items, key=_sort_key):
+                    content = (h.get('markText') or '').strip()
+                    thought = (h.get('thought') or '').strip()
+                    if content:
+                        md_content += f"> {content}\n\n"
+                    if thought:
+                        md_content += f"💭 **想法**: {thought}\n\n"
                 md_content += "---\n\n"
         
         # 添加书评
@@ -291,31 +346,32 @@ class WeReadExporter:
         failed = []
         
         for book in books:
+            normalized_book = self._book_payload(book)
             try:
-                normalized_book = self._book_payload(book)
                 content = self.export_book(normalized_book, format, since_days=since_days)
                 if content is None:
                     continue
-                
-                # 保存文件
-                title = normalized_book.get('title', 'Unknown').replace('/', '-')
+
+                title = self._safe_filename(normalized_book.get('title'), fallback='Untitled')
                 filename = f"{title}.{format}"
                 filepath = os.path.join(output_dir, filename)
-                
+
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(content)
-                
+
                 exported.append({
                     'title': normalized_book.get('title'),
                     'filepath': filepath,
-                    'format': format
+                    'format': format,
                 })
-                
                 print(f"  ✅ 已保存: {filename}")
-                
+
+            except AuthExpired:
+                # 鉴权失效需冒泡到顶层重新登录，不能被当成单本失败吞掉
+                raise
             except Exception as e:
-                print(f"  ❌ 导出失败 《{self._book_payload(book).get('title', 'Unknown')}》: {e}")
-                failed.append(self._book_payload(book).get('title', 'Unknown'))
+                print(f"  ❌ 导出失败 《{normalized_book.get('title', 'Unknown')}》: {e}")
+                failed.append(normalized_book.get('title', 'Unknown'))
         
         print(f"\n📊 导出完成: {len(exported)} 本成功, {len(failed)} 本失败")
         
@@ -332,14 +388,12 @@ class WeReadExporter:
             return
         
         Path(obsidian_dir).mkdir(parents=True, exist_ok=True)
-        
+
         print(f"\n🔄 同步到 Obsidian...")
         for item in exported_files:
             src = item['filepath']
             dst = os.path.join(obsidian_dir, os.path.basename(src))
-            
             try:
-                import shutil
                 shutil.copy2(src, dst)
                 print(f"  ✅ 已同步: {os.path.basename(src)}")
             except Exception as e:
@@ -374,6 +428,53 @@ class WeReadExporter:
         
         return stats
 
+def _run_action(args, exporter, days_window, parser):
+    if args.stats:
+        stats = exporter.get_stats()
+        print("📊 阅读统计")
+        print(f"  总书籍: {stats['total_books']}")
+        print(f"  已读完: {stats['finished']}")
+        print(f"  阅读中: {stats['reading']}")
+        print(f"  总阅读时长: {stats['total_read_time_minutes']} 分钟")
+        return
+
+    if args.book:
+        books = exporter.get_notebook_books()
+        target = None
+        for b in books:
+            candidate = exporter._book_payload(b)
+            if args.book in candidate.get('title', ''):
+                target = candidate
+                break
+
+        if not target:
+            print(f"❌ 未找到书籍: {args.book}")
+            return
+
+        content = exporter.export_book(target, args.format, since_days=days_window)
+        if content is None:
+            if days_window:
+                print(f"⚠️ 在最近 {days_window} 天内没有找到《{target['title']}》的新笔记")
+            else:
+                print(f"⚠️ 《{target['title']}》没有可导出的笔记")
+            return
+
+        output_dir = args.output or exporter.config.get('output_dir')
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        filename = f"{exporter._safe_filename(target.get('title'))}.{args.format}"
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"✅ 已导出: {filepath}")
+        return
+
+    if args.all or args.this_week or args.last_day or args.days:
+        exporter.export_all(format=args.format, output_dir=args.output, since_days=days_window)
+        return
+
+    parser.print_help()
+
+
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='微信读书笔记导出工具')
@@ -386,66 +487,44 @@ def main():
     parser.add_argument('--format', '-f', default='markdown', choices=['markdown', 'json'], help='输出格式')
     parser.add_argument('--output', '-o', help='输出目录')
     parser.add_argument('--stats', action='store_true', help='显示阅读统计')
-    parser.add_argument('--sync', action='store_true', help='同步到 Obsidian')
-    
-    args = parser.parse_args()
-    
-    try:
-        exporter = WeReadExporter(args.config)
-        days_window = args.days
-        if days_window is None and args.last_day:
-            days_window = 1
-        if days_window is None and args.this_week:
-            days_window = 7
-        
-        if args.stats:
-            stats = exporter.get_stats()
-            print("📊 阅读统计")
-            print(f"  总书籍: {stats['total_books']}")
-            print(f"  已读完: {stats['finished']}")
-            print(f"  阅读中: {stats['reading']}")
-            print(f"  总阅读时长: {stats['total_read_time_minutes']} 分钟")
-        
-        elif args.book:
-            # 导出特定书籍
-            books = exporter.get_notebook_books()
-            target = None
-            for b in books:
-                candidate = exporter._book_payload(b)
-                if args.book in candidate.get('title', ''):
-                    target = candidate
-                    break
-            
-            if target:
-                content = exporter.export_book(target, args.format, since_days=days_window)
-                if content is None:
-                    if days_window:
-                        print(f"⚠️ 在最近 {days_window} 天内没有找到《{target['title']}》的新笔记")
-                    else:
-                        print(f"⚠️ 《{target['title']}》没有可导出的笔记")
-                    return
-                output_dir = args.output or exporter.config.get('output_dir')
-                Path(output_dir).mkdir(parents=True, exist_ok=True)
-                
-                filename = f"{target['title'].replace('/', '-')}.{args.format}"
-                filepath = os.path.join(output_dir, filename)
-                
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                
-                print(f"✅ 已导出: {filepath}")
-            else:
-                print(f"❌ 未找到书籍: {args.book}")
+    parser.add_argument('--login', action='store_true', help='跳过续期，直接扫码登录')
+    parser.add_argument('--no-auto-renew', action='store_true', help='跳过自动续期 skey')
 
-        elif args.all or args.this_week or args.last_day or args.days:
-            exporter.export_all(format=args.format, output_dir=args.output, since_days=days_window)
-        
-        else:
-            parser.print_help()
-    
+    args = parser.parse_args()
+
+    days_window = args.days
+    if days_window is None and args.last_day:
+        days_window = 1
+    if days_window is None and args.this_week:
+        days_window = 7
+
+    config_path = WeReadExporter._resolve_config_path(args.config)
+
+    try:
+        if args.login:
+            ok = qr_login(config_path)
+            if not ok:
+                sys.exit(1)
+            if not (args.all or args.this_week or args.last_day or args.days or args.book or args.stats):
+                return
+        elif not args.no_auto_renew:
+            ensure_auth(config_path)
+
+        exporter = WeReadExporter(args.config)
+
+        try:
+            _run_action(args, exporter, days_window, parser)
+        except AuthExpired as exc:
+            print(f"⚠️ 检测到鉴权失效（{exc}），尝试扫码重登…")
+            if not qr_login(config_path):
+                sys.exit(1)
+            exporter = WeReadExporter(args.config)
+            _run_action(args, exporter, days_window, parser)
+
     except Exception as e:
         print(f"❌ 错误: {e}")
         sys.exit(1)
+
 
 if __name__ == '__main__':
     main()
