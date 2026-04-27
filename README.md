@@ -60,13 +60,21 @@ python scripts/weread_auth.py --qr   # 跳过续期，直接扫码
 
 ```bash
 python scripts/weread_export.py --all          # 全部有笔记的书
-python scripts/weread_export.py --this-week    # 最近 7 天新增
-python scripts/weread_export.py --days 30      # 最近 N 天新增
+python scripts/weread_export.py --this-week    # 全量同步 + 最近 7 天 digest
+python scripts/weread_export.py --days 30      # 全量同步 + 最近 N 天 digest
 python scripts/weread_export.py --book "书名"
 python scripts/weread_export.py --stats
 ```
 
-「最近 N 天」按每条笔记的 `createTime` 过滤，没有就是 0，不会编结果。
+## 增量同步
+
+第一次跑会一本一本拉，**单次最多 50 本**（带 0.3-0.8s 抖动延迟），库存大的用户跑几次就把基线建完了。
+
+之后再跑会用 notebook 接口返回的 `sort` 字段做 sort-skip——没动过的书直接跳过不拉接口，**日常每次只拉本期更新过的几本**，请求数和耗时都很小，也不容易撞风控。
+
+每本书在本地 `output/` 下永远是一份当前完整的 markdown，不会被 `--this-week` 截短。`--this-week` / `--days N` 会额外在 `output/digest/` 里写一份"自上次同步以来 + 在时间窗内"的新增 digest。
+
+状态记录在 `output/.state/synced.json`，删掉就等于"忘掉所有同步历史，下次重新走一次基线"。
 
 ## 隐私
 

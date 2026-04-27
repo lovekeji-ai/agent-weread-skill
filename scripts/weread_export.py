@@ -6,10 +6,12 @@
 
 import json
 import os
+import random
 import re
 import shutil
 import ssl
 import sys
+import time
 import argparse
 from collections import OrderedDict
 from datetime import datetime, timedelta
@@ -44,6 +46,11 @@ _bootstrap_preferred_python()
 import requests
 
 from weread_auth import ensure_auth, qr_login
+from weread_state import State, default_state_path
+
+
+DEFAULT_MAX_BOOKS_PER_RUN = 50
+PACING_RANGE = (0.3, 0.8)  # 每本书之间的随机延迟（秒），降低风控概率
 
 
 class AuthExpired(Exception):
@@ -218,32 +225,28 @@ class WeReadExporter:
     def _filter_items_by_days(self, items, since_days=None):
         return [item for item in items if self._is_within_days(item, since_days)]
 
-    def export_book(self, book, format='markdown', since_days=None):
-        """导出单本书籍"""
+    def _render_book(self, book, highlights, reviews, format):
+        if format == 'markdown':
+            return self._export_markdown(book, highlights, reviews)
+        if format == 'json':
+            return self._export_json(book, highlights, reviews)
+        raise ValueError(f"Unsupported format: {format}")
+
+    def export_book(self, book, format='markdown'):
+        """导出单本书籍：始终写全量内容。
+
+        `since_days` 不再作用于 per-book 文件——文件永远是当前完整内容。
+        """
         book = self._book_payload(book)
         book_id = book.get('bookId')
         title = book.get('title', 'Unknown')
-        author = book.get('author', 'Unknown')
-        
+
         print(f"📖 正在导出: 《{title}》")
-        
-        # 获取数据
+
         highlights = self.get_highlights(book_id) if self.config.get('export_highlights') else []
         reviews = self.get_reviews(book_id) if self.config.get('export_reviews') else []
 
-        if since_days:
-            highlights = self._filter_items_by_days(highlights, since_days)
-            reviews = self._filter_items_by_days(reviews, since_days)
-
-        if since_days and not highlights and not reviews:
-            return None
-        
-        if format == 'markdown':
-            return self._export_markdown(book, highlights, reviews)
-        elif format == 'json':
-            return self._export_json(book, highlights, reviews)
-        else:
-            raise ValueError(f"Unsupported format: {format}")
+        return self._render_book(book, highlights, reviews, format)
     
     def _export_markdown(self, book, highlights, reviews):
         """导出为 Markdown"""
@@ -326,60 +329,176 @@ class WeReadExporter:
         }
         return json.dumps(data, ensure_ascii=False, indent=2)
     
-    def export_all(self, format=None, output_dir=None, since_days=None):
-        """导出所有有笔记的书籍"""
+    def export_all(self, format=None, output_dir=None, since_days=None, max_books=None):
+        """导出所有有笔记的书籍。
+
+        语义：
+        - per-book 文件永远写全量内容（idempotent）
+        - notebook.sort 没变 + 文件已存在 → sort-skip，不调 bookmarklist/reviewlist
+        - 实际拉过的书数受 max_books 限制（默认 50），防止首次 N 本书暴拉触发风控
+        - since_days 仅用于生成 digest 文件（output/digest/*.md），不影响 per-book 文件
+        """
         format = format or self.config.get('output_format', 'markdown')
         output_dir = output_dir or self.config.get('output_dir', '/root/workspace/weread-notes')
-        
-        # 创建输出目录
+        if max_books is None:
+            max_books = self.config.get('max_books_per_run', DEFAULT_MAX_BOOKS_PER_RUN)
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        
-        # 优先获取有笔记的书籍，避免导出整张书架的空文件
+
+        state = State(default_state_path(output_dir))
+
         books = self.get_notebook_books()
         if not books:
             print("❌ 没有找到带笔记的书籍，请检查 Cookie 是否有效")
             return []
-        
-        print(f"📚 找到 {len(books)} 本带笔记的书籍")
-        
+
+        cap_label = max_books if max_books else "∞"
+        print(f"📚 notebook 接口返回 {len(books)} 本带笔记的书籍 · 单次拉取上限 {cap_label}")
+
         exported = []
         failed = []
-        
+        skipped = 0
+        fetched = 0
+        digest_buckets: "OrderedDict[str, tuple]" = OrderedDict()
+
         for book in books:
-            normalized_book = self._book_payload(book)
+            normalized = self._book_payload(book)
+            book_id = str(normalized.get('bookId') or '')
+            title = normalized.get('title') or 'Unknown'
+            current_sort = int(normalized.get('sort') or 0)
+            prev_sort = state.get_sort(book_id)
+            prev_bookmark_ids = state.get_synced_bookmark_ids(book_id)
+            prev_review_ids = state.get_synced_review_ids(book_id)
+
+            safe_title = self._safe_filename(title, fallback='Untitled')
+            filename = f"{safe_title}.{format}"
+            filepath = os.path.join(output_dir, filename)
+
+            already_baseline = bool(prev_sort or prev_bookmark_ids or prev_review_ids)
+            if already_baseline and prev_sort == current_sort and os.path.exists(filepath):
+                skipped += 1
+                continue
+
+            if max_books and fetched >= max_books:
+                remaining = len(books) - skipped - fetched
+                print(f"⏸ 已达单次拉取上限 {max_books}；剩余 {remaining} 本下次再跑")
+                break
+
+            if fetched > 0:
+                time.sleep(random.uniform(*PACING_RANGE))
+
             try:
-                content = self.export_book(normalized_book, format, since_days=since_days)
-                if content is None:
-                    continue
-
-                title = self._safe_filename(normalized_book.get('title'), fallback='Untitled')
-                filename = f"{title}.{format}"
-                filepath = os.path.join(output_dir, filename)
-
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(content)
-
-                exported.append({
-                    'title': normalized_book.get('title'),
-                    'filepath': filepath,
-                    'format': format,
-                })
-                print(f"  ✅ 已保存: {filename}")
-
+                highlights = self.get_highlights(book_id) if self.config.get('export_highlights') else []
+                reviews = self.get_reviews(book_id) if self.config.get('export_reviews') else []
             except AuthExpired:
-                # 鉴权失效需冒泡到顶层重新登录，不能被当成单本失败吞掉
                 raise
             except Exception as e:
-                print(f"  ❌ 导出失败 《{normalized_book.get('title', 'Unknown')}》: {e}")
-                failed.append(normalized_book.get('title', 'Unknown'))
-        
-        print(f"\n📊 导出完成: {len(exported)} 本成功, {len(failed)} 本失败")
-        
-        # 同步到 Obsidian
+                print(f"  ❌ 拉取失败 《{title}》: {e}")
+                failed.append(title)
+                fetched += 1
+                continue
+
+            if since_days:
+                new_h = [
+                    h for h in highlights
+                    if h.get('bookmarkId')
+                    and h['bookmarkId'] not in prev_bookmark_ids
+                    and self._is_within_days(h, since_days)
+                ]
+                new_r = [
+                    r for r in reviews
+                    if r.get('reviewId')
+                    and r['reviewId'] not in prev_review_ids
+                    and self._is_within_days(r, since_days)
+                ]
+                if new_h or new_r:
+                    digest_buckets[book_id] = (normalized, new_h, new_r)
+
+            try:
+                content = self._render_book(normalized, highlights, reviews, format)
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                exported.append({'title': title, 'filepath': filepath, 'format': format})
+                print(f"  ✅ {filename} (划线 {len(highlights)} / 想法书评 {len(reviews)})")
+            except Exception as e:
+                print(f"  ❌ 写入失败 《{title}》: {e}")
+                failed.append(title)
+                fetched += 1
+                continue
+
+            state.update_book(
+                book_id,
+                title=title,
+                sort=current_sort,
+                bookmark_ids=[h.get('bookmarkId') for h in highlights if h.get('bookmarkId')],
+                review_ids=[r.get('reviewId') for r in reviews if r.get('reviewId')],
+            )
+            fetched += 1
+
+        state.save()
+
+        print(f"\n📊 完成: 拉取 {fetched} · sort-skip {skipped} · 失败 {len(failed)}")
+
+        if since_days:
+            if digest_buckets:
+                digest_path = self._write_digest(digest_buckets, output_dir, since_days)
+                print(f"📰 digest 已写入: {digest_path}")
+            else:
+                print(f"📰 最近 {since_days} 天没有新增笔记")
+
         if self.config.get('sync_to_obsidian'):
             self._sync_to_obsidian(exported)
-        
+
         return exported
+
+    def _write_digest(self, buckets, output_dir, since_days):
+        """把"自上次同步以来 + 在时间窗口内"的新条目写成一个 digest 文件。"""
+        digest_dir = Path(output_dir) / 'digest'
+        digest_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime('%Y-%m-%d')
+        path = digest_dir / f"digest-last-{since_days}d-{today}.md"
+
+        total_h = sum(len(hs) for _, hs, _ in buckets.values())
+        total_r = sum(len(rs) for _, _, rs in buckets.values())
+
+        md = f"# 微信读书最近 {since_days} 天新增 ({today})\n\n"
+        md += f"涉及 {len(buckets)} 本书 · {total_h} 条标注 · {total_r} 条想法/书评\n\n---\n\n"
+
+        for book_id, (book, hs, rs) in buckets.items():
+            title = book.get('title') or '?'
+            author = book.get('author') or ''
+            md += f"## 《{title}》"
+            if author:
+                md += f" — {author}"
+            md += "\n\n"
+
+            if hs:
+                grouped = OrderedDict()
+                for h in hs:
+                    chapter = h.get('chapterTitle') or '未知章节'
+                    grouped.setdefault(chapter, []).append(h)
+                md += "### 💡 新增标注\n\n"
+                for chapter, items in grouped.items():
+                    md += f"**{chapter}**\n\n"
+                    for h in items:
+                        text = (h.get('markText') or '').strip()
+                        thought = (h.get('thought') or '').strip()
+                        if text:
+                            md += f"> {text}\n\n"
+                        if thought:
+                            md += f"💭 {thought}\n\n"
+
+            if rs:
+                md += "### 📝 新增想法/书评\n\n"
+                for r in rs:
+                    content = (r.get('content') or '').strip()
+                    if content:
+                        md += f"{content}\n\n---\n\n"
+
+            md += "\n"
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(md)
+        return path
     
     def _sync_to_obsidian(self, exported_files):
         """同步到 Obsidian"""
@@ -451,12 +570,9 @@ def _run_action(args, exporter, days_window, parser):
             print(f"❌ 未找到书籍: {args.book}")
             return
 
-        content = exporter.export_book(target, args.format, since_days=days_window)
+        content = exporter.export_book(target, args.format)
         if content is None:
-            if days_window:
-                print(f"⚠️ 在最近 {days_window} 天内没有找到《{target['title']}》的新笔记")
-            else:
-                print(f"⚠️ 《{target['title']}》没有可导出的笔记")
+            print(f"⚠️ 《{target['title']}》没有可导出的笔记")
             return
 
         output_dir = args.output or exporter.config.get('output_dir')
@@ -466,10 +582,17 @@ def _run_action(args, exporter, days_window, parser):
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
         print(f"✅ 已导出: {filepath}")
+        if days_window:
+            print(f"💡 提示：--book 始终写全量内容；要看最近 {days_window} 天的新增请去掉 --book 跑 --days {days_window}")
         return
 
     if args.all or args.this_week or args.last_day or args.days:
-        exporter.export_all(format=args.format, output_dir=args.output, since_days=days_window)
+        exporter.export_all(
+            format=args.format,
+            output_dir=args.output,
+            since_days=days_window,
+            max_books=args.max_books,
+        )
         return
 
     parser.print_help()
@@ -487,6 +610,8 @@ def main():
     parser.add_argument('--format', '-f', default='markdown', choices=['markdown', 'json'], help='输出格式')
     parser.add_argument('--output', '-o', help='输出目录')
     parser.add_argument('--stats', action='store_true', help='显示阅读统计')
+    parser.add_argument('--max-books', type=int, default=None,
+                        help=f'单次最多拉取的书籍数（不含 sort-skip 跳过的），默认 {DEFAULT_MAX_BOOKS_PER_RUN}；传 0 表示不限')
     parser.add_argument('--login', action='store_true', help='跳过续期，直接扫码登录')
     parser.add_argument('--no-auto-renew', action='store_true', help='跳过自动续期 skey')
 
@@ -497,6 +622,10 @@ def main():
         days_window = 1
     if days_window is None and args.this_week:
         days_window = 7
+
+    # --max-books 0 → 不限
+    if args.max_books == 0:
+        args.max_books = 0  # falsy in export_all → 解释为"无上限"
 
     config_path = WeReadExporter._resolve_config_path(args.config)
 

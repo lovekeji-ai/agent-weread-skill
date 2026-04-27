@@ -23,12 +23,23 @@ metadata: {"openclaw":{"emoji":"📚","requires":{"bins":["python3"]},"install":
 
 ```bash
 python scripts/weread_export.py --all          # 全部带笔记的书
-python scripts/weread_export.py --this-week    # 最近 7 天新增
-python scripts/weread_export.py --days 30      # 最近 N 天新增
+python scripts/weread_export.py --this-week    # 全量同步 + 最近 7 天 digest
+python scripts/weread_export.py --days 30      # 全量同步 + 最近 N 天 digest
 python scripts/weread_export.py --book "书名"
 python scripts/weread_export.py --stats
 python scripts/weread_export.py --login        # 强制扫码登录
 ```
+
+`--max-books N` 控制单次最多拉取的书籍数（默认 50），sort-skip 跳过的不算。
+
+## 增量与状态
+
+skill 在 `output/.state/synced.json` 维护每本书的 `sort` 和已同步的 bookmark/review id 集合：
+
+- **per-book 文件永远写全量内容**：`output/《书名》.md` 是当前最新副本，不会被时间窗口截断
+- **sort-skip**：notebook 接口的 `sort` 没变 + 文件已存在 → 直接跳过，不调 bookmarklist/reviewlist
+- **digest 增量**：传 `--this-week` / `--days N` 时，额外把"自上次同步以来 + 时间窗内"的新条目写到 `output/digest/digest-last-Nd-YYYY-MM-DD.md`
+- **首次跑节流**：单次最多拉 50 本（含 pacing 0.3-0.8s 抖动），首次跑库存大的用户多跑几次即可，每次都不会触发风控级别的 QPS
 
 ## 鉴权
 

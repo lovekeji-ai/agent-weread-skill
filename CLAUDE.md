@@ -35,17 +35,24 @@ Key config options: `output_format` (markdown/json), `output_dir`, `sync_to_obsi
 
 ## Architecture
 
-All logic lives in **`scripts/weread_export.py`** — a single-file script with no external framework.
+Three modules under `scripts/`:
 
-**`WeReadExporter` class** is the core:
-- Authenticates via `wr_vid`/`wr_skey` cookies in request headers
-- Fetches books with notes from `/api/user/notebook` (preferred; avoids books with no annotations)
-- Fetches highlights from `/web/book/bookmarklist` and reviews from `/web/review/list`
-- Filters by `createTime` timestamp when a time window (`--days`) is specified
-- Exports via `_export_markdown()` or `_export_json()`, writes to `output_dir`
-- Optionally syncs output files to an Obsidian vault via `shutil.copy2()`
+- **`weread_export.py`** — main CLI; `WeReadExporter` orchestrates fetching, rendering, and writing.
+- **`weread_auth.py`** — skey renewal via `/web/login/renewal` (30-min throttle) + QR-scan fallback via `/web/login/getuid` + `/web/login/getinfo`. Called from `main()` before any export, and again on `AuthExpired` raised mid-flight.
+- **`weread_state.py`** — single-JSON state at `output/.state/synced.json`. Per-book record: `{title, sort, synced_bookmark_ids, synced_review_ids, last_synced_at}`.
 
-**API compatibility note**: The old endpoints `/web/book/bookShelf` and `/web/book/reviewlist` are deprecated (return 404). The notebook API (`/api/user/notebook`) returns books under a nested `book` field — this is handled by `_book_payload()`.
+**Sync semantics:**
+- per-book file (`output/《title》.md`) **always written with full current content** — idempotent, can't be truncated by time-window flags.
+- **sort-skip**: if `notebook.sort == state.sort` AND the per-book file already exists, skip — no `bookmarklist`/`reviewlist` call. Free.
+- **per-run cap**: `--max-books N` (default 50) limits how many books actually get fetched in one invocation. sort-skipped books don't count. Combined with 0.3-0.8s jittered sleep between fetches, this keeps QPS well under any plausible WeRead anti-bot threshold even on first-run users with 500+ books — they just need to run the command a few times.
+- **digest**: when `--this-week` / `--days N` is set, additionally write `output/digest/digest-last-Nd-YYYY-MM-DD.md` with items that are (a) inside the time window AND (b) not present in `state.synced_bookmark_ids` / `synced_review_ids`. The state set is the authoritative "already-seen" record, equivalent to weread2flomo's `synced_ids` set but scoped per book.
+
+**Auth flow:**
+- `_api_request` raises `AuthExpired` on HTTP 401/403 or known auth errCodes (`-2010 / -2012 / -2013 / -12013`).
+- Top-level `main()` catches `AuthExpired`, runs `qr_login`, rebuilds the exporter, retries once.
+- The per-book except in `export_all` re-raises `AuthExpired` rather than swallowing it, so mid-flight token expiry triggers the retry.
+
+**API compatibility note**: The old endpoints `/web/book/bookShelf` and `/web/book/reviewlist` are deprecated (return 404). The notebook API (`/api/user/notebook`) returns books nested under a `book` field; `_book_payload()` flattens this.
 
 ## Python Environment
 
