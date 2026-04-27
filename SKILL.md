@@ -1,7 +1,7 @@
 ---
 name: weread-export
 description: 自动导出微信读书笔记，支持 Markdown/JSON 格式，可同步到 Obsidian
-homepage: https://github.com/lovekeji-ai/openclaw-weread-skill
+homepage: https://github.com/lovekeji-ai/agent-weread-skill
 metadata: {"openclaw":{"emoji":"📚","requires":{"bins":["python3"]},"install":[{"id":"pip","kind":"pip","packages":["requests","beautifulsoup4"],"label":"安装 Python 依赖"}]}}
 ---
 
@@ -161,7 +161,7 @@ python scripts/weread_export.py --stats
 ## 文件结构
 
 ```
-openclaw-weread-skill/
+agent-weread-skill/
 ├── SKILL.md              # 本说明文件
 ├── README.md             # 详细文档
 ├── scripts/

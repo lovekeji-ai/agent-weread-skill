@@ -43,7 +43,7 @@ python scripts/weread_export.py --stats
 ## 文件结构
 
 ```
-openclaw-weread-skill/
+agent-weread-skill/
 ├── SKILL.md              # 技能说明
 ├── README.md             # 本文件
 ├── scripts/
