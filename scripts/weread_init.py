@@ -65,15 +65,18 @@ def configure_output_dir(config_path: str | Path, output_dir: str | None = None,
     return resolved
 
 
-def run_init_wizard(config_path: str | Path, output_dir: str | None = None, input_fn=None, print_fn=None) -> bool:
+def run_init_wizard(config_path: str | Path, output_dir: str | None = None, skip_login: bool = False, input_fn=None, print_fn=None) -> bool:
     if input_fn is None:
         input_fn = input
     if print_fn is None:
         print_fn = print
 
-    print_fn("➡️ 开始微信读书初始化：先扫码登录，再配置导出目录")
-    if not qr_login(config_path):
-        return False
+    if skip_login:
+        print_fn("➡️ 跳过扫码登录，直接配置导出目录")
+    else:
+        print_fn("➡️ 开始微信读书初始化：先扫码登录，再配置导出目录")
+        if not qr_login(config_path):
+            return False
     resolved = configure_output_dir(config_path, output_dir=output_dir, input_fn=input_fn, print_fn=print_fn)
     if not resolved:
         return False
@@ -84,8 +87,9 @@ def run_init_wizard(config_path: str | Path, output_dir: str | None = None, inpu
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="微信读书初始化向导")
     parser.add_argument("--config", "-c", default=str(SCRIPT_DIR.parent / "config" / "weread.json"))
-    parser.add_argument("--output-dir", help="扫码成功后直接写入输出目录，跳过交互提问")
+    parser.add_argument("--output-dir", help="直接写入输出目录，跳过交互提问")
+    parser.add_argument("--skip-login", action="store_true", help="skey 仍有效时跳过扫码，只走 output_dir 这一步")
     args = parser.parse_args()
 
-    ok = run_init_wizard(args.config, output_dir=args.output_dir)
+    ok = run_init_wizard(args.config, output_dir=args.output_dir, skip_login=args.skip_login)
     raise SystemExit(0 if ok else 1)

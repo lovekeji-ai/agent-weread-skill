@@ -16,11 +16,14 @@ Agent 被触发后**先静默执行 preflight**（不要列菜单、不要先问
 ### Preflight（静默，不输出过程）
 
 1. 读 `config/weread.json`（不存在时 `weread_auth.py` 会自动从 template 复制一份，无需手动 cp）：
-   - `vid` 或 `skey` 为空 → **未初始化**，走「初始化向导」
+   - `vid` 或 `skey` 为空 → **未初始化**，走「初始化向导」从 Step 1 开始
    - 否则继续
 2. 跑 `python scripts/weread_auth.py`（自动续期）：
-   - exit 0 → **登录态正常**，走「已就绪」分支
-   - exit 1 → skey 过期/被拒，**未初始化**，走「初始化向导」从 Step 1 开始（output_dir 已有就跳过 Step 2）
+   - exit 1 → skey 过期/被拒 → 走「初始化向导」从 Step 1 开始
+   - exit 0 → 登录态有效，进入第 3 步
+3. 检查 `output_dir` 是否是真实路径：
+   - 为空 / 仍是 template 的占位符（`/root/workspace/weread-notes`）→ 走「初始化向导」**只跑 Step 2**：`python scripts/weread_init.py --skip-login`
+   - 否则 → 走「已就绪」分支
 
 ### 初始化向导（分步执行，每一步等用户确认后再进下一步）
 
