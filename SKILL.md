@@ -1,7 +1,7 @@
 ---
 name: weread-export
 description: 自动导出微信读书笔记，支持 Markdown/JSON 格式，可同步到 Obsidian
-homepage: https://github.com/zhongyi-byte/openclaw-weread-skill
+homepage: https://github.com/lovekeji-ai/openclaw-weread-skill
 metadata: {"openclaw":{"emoji":"📚","requires":{"bins":["python3"]},"install":[{"id":"pip","kind":"pip","packages":["requests","beautifulsoup4"],"label":"安装 Python 依赖"}]}}
 ---
 
@@ -62,14 +62,17 @@ pip install requests beautifulsoup4
 # 导出所有笔记
 python scripts/weread_export.py --all
 
-# 导出本周新增
+# 导出最近 1 天新增
+python scripts/weread_export.py --last-day
+
+# 导出最近 7 天新增
 python scripts/weread_export.py --this-week
+
+# 导出最近 N 天新增
+python scripts/weread_export.py --days 30
 
 # 导出特定书籍
 python scripts/weread_export.py --book "书名"
-
-# 同步到 Obsidian
-python scripts/weread_export.py --sync
 
 # 查看阅读统计
 python scripts/weread_export.py --stats
