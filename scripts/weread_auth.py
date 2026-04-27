@@ -146,7 +146,7 @@ def renew_skey(config_path: str | os.PathLike, force: bool = False) -> bool:
     return True
 
 
-def _render_qr_terminal(text: str) -> None:
+def _render_qr_terminal(text: str, output_dir: str | os.PathLike | None = None) -> Path:
     try:
         import qrcode  # type: ignore
     except ImportError:
@@ -156,12 +156,28 @@ def _render_qr_terminal(text: str) -> None:
     qr = qrcode.QRCode(border=1)
     qr.add_data(text)
     qr.make(fit=True)
+
+    qr_output_dir = Path(output_dir) if output_dir else Path(__file__).resolve().parent.parent / "output" / "login_qr"
+    qr_path = qr_output_dir / f"weread-login-{int(time.time())}.png"
+
+    try:
+        qr_output_dir.mkdir(parents=True, exist_ok=True)
+        img = qr.make_image()
+        img.save(qr_path)
+    except Exception as exc:
+        print(f"⚠️ 二维码 PNG 保存失败（不影响终端扫码）: {exc}")
+    else:
+        print(f"  二维码图片已保存到：{qr_path}")
+        print(f"  MEDIA:{qr_path}")
+        print("  如果你是通过 Agent / Hermes 调用这个 skill，可以把上面的 PNG 路径作为图片发回对话框。")
+
     print()
     print("  请用微信扫码登录（终端可能需要拉宽窗口）：")
     print()
     qr.print_ascii(invert=True)
     print()
     print(f"  如果终端无法扫码，请把这个 URL 用手机微信打开：\n  {text}\n")
+    return qr_path
 
 
 def qr_login(config_path: str | os.PathLike, timeout_seconds: int = 180) -> bool:

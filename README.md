@@ -31,7 +31,7 @@ cp config/weread.json.template config/weread.json
 
 把 `output_dir` 改成你想要的输出目录；要同步到 Obsidian 就把 `sync_to_obsidian` 设为 `true` 并填 `obsidian_dir`。
 
-然后扫码登录一次（终端会渲染 QR，用微信扫一下）：
+然后扫码登录一次（终端会渲染 QR，用微信扫一下；同时会生成一张 PNG 二维码，方便 Agent / Hermes 直接发回对话框）：
 
 ```bash
 python scripts/weread_auth.py --qr

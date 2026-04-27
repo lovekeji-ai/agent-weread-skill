@@ -2,7 +2,7 @@
 name: agent-weread-skill
 description: 自动导出微信读书笔记，支持 Markdown/JSON 格式，可同步到 Obsidian
 homepage: https://github.com/lovekeji-ai/agent-weread-skill
-metadata: {"openclaw":{"emoji":"📚","requires":{"bins":["python3"]},"install":[{"id":"pip","kind":"pip","packages":["requests","beautifulsoup4","qrcode"],"label":"安装 Python 依赖"}]}}
+metadata: {"openclaw":{"emoji":"📚","requires":{"bins":["python3"]},"install":[{"id":"pip","kind":"pip","packages":["requests","beautifulsoup4","qrcode","Pillow"],"label":"安装 Python 依赖"}]}}
 ---
 
 # 微信读书笔记导出 Skill
@@ -59,7 +59,7 @@ skill 在 `output/.state/synced.json` 维护每本书的 `sort` 和已同步的 
 
 ## 鉴权
 
-第一次跑前 `cp config/weread.json.template config/weread.json` 并填好 `output_dir`，然后跑一次 `python scripts/weread_auth.py --qr` 扫码登录。
+第一次跑前 `cp config/weread.json.template config/weread.json` 并填好 `output_dir`，然后跑一次 `python scripts/weread_auth.py --qr` 扫码登录。扫码时会同时输出终端 ASCII 二维码和 PNG 文件路径（含 `MEDIA:` 行），方便 Agent / Hermes 把二维码图片发回对话框。
 
 之后每次导出会自动调微信读书的 `/web/login/renewal` 续期 `wr_skey`（30 分钟内会节流跳过），续期失败时自动转 QR 扫码。
 
