@@ -15,8 +15,8 @@ Agent 被触发后**先静默执行 preflight**（不要列菜单、不要先问
 
 ### Preflight（静默，不输出过程）
 
-1. 读 `config/weread.json`：
-   - 文件不存在 / 仍是 template / `vid` 或 `skey` 为空 → **未初始化**，走「初始化向导」
+1. 读 `config/weread.json`（不存在时 `weread_auth.py` 会自动从 template 复制一份，无需手动 cp）：
+   - `vid` 或 `skey` 为空 → **未初始化**，走「初始化向导」
    - 否则继续
 2. 跑 `python scripts/weread_auth.py`（自动续期）：
    - exit 0 → **登录态正常**，走「已就绪」分支

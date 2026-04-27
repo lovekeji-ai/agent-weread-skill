@@ -35,7 +35,14 @@ DEFAULT_HEADERS = {
 
 
 def load_config(config_path: str | os.PathLike) -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
+    path = Path(config_path)
+    if not path.exists():
+        template = path.with_name(path.name + ".template")
+        if template.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(template.read_bytes())
+            print(f"ℹ️  未找到 {path.name}，已从模板初始化")
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
