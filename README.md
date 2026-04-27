@@ -23,20 +23,19 @@ pip install requests beautifulsoup4 qrcode Pillow
 
 ## 一次性配置：初始化向导
 
-第一次用直接运行初始化向导：
+正常路径是**直接对 Agent 说一句中文**——它每次被触发时都会先静默 preflight：
+1. 没有 `config/weread.json` → 自动从 template 复制一份
+2. 续期 `wr_skey` 不通过 → 走扫码登录
+3. `output_dir` 还停在模板占位符（`/root/workspace/weread-notes`）→ 让你选输出目录
+
+任何一步不满足就触发对应的「初始化向导」步骤，初始化完再继续，**完全不用你提前 `cp config`**。
+
+要手动跑向导也行：
 
 ```bash
-python scripts/weread_init.py
-```
-
-它会自动完成两步：
-1. 弹出扫码登录（终端 ASCII + PNG 二维码，方便 Agent / Hermes 直接发回对话框）
-2. 扫码成功后继续询问并写入 `output_dir`
-
-如果你已经知道输出目录，也可以一次性带上：
-
-```bash
-python scripts/weread_init.py --output-dir ~/Documents/weread
+python scripts/weread_init.py                              # 扫码 + 选 output_dir
+python scripts/weread_init.py --output-dir ~/Documents/weread   # 扫码 + 直接写目录
+python scripts/weread_init.py --skip-login                 # skey 还有效，只设 output_dir
 ```
 
 初始化成功后，`vid / skey / rt` 和 `output_dir` 都会写回 `config/weread.json`。
