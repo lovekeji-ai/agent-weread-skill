@@ -75,6 +75,15 @@ openclaw-weread-skill/
 }
 ```
 
+## 特别鸣谢
+
+本项目在调试接口兼容性与近期增量导出能力时，参考了这些实现思路：
+
+- [blessonism/weread2flomo](https://github.com/blessonism/weread2flomo) - 提供按 `createTime` 做最近 N 天过滤与增量同步的思路
+- [Dawn11111/weread2notion-pro](https://github.com/Dawn11111/weread2notion-pro) - 提供新版微信读书接口组合与 Cookie 处理参考
+- [MoonstoneF/WeRead2CraftCollection](https://github.com/MoonstoneF/WeRead2CraftCollection) - 提供 `/web/review/list` 等接口参数参考
+- [openclaw/skills](https://github.com/openclaw/skills) - 提供 OpenClaw skill 组织方式与 WeRead 导出脚本参考
+
 ## License
 
 MIT

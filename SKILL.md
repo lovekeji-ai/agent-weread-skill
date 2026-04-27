@@ -195,6 +195,15 @@ openclaw-weread-skill/
 - `--all` 最好优先导出 `notebook` 里的书，而不是整张书架，避免生成大量没有划线/想法的空文件
 - 请求头里加上 `Referer: https://weread.qq.com/`、`Origin: https://weread.qq.com`、`Accept: application/json, text/plain, */*` 更稳
 
+## 特别鸣谢
+
+本 skill 在接口适配、最近 N 天筛选和脚本结构整理时，参考了这些开源项目：
+
+- [blessonism/weread2flomo](https://github.com/blessonism/weread2flomo) - 最近 N 天过滤、`createTime` 筛选、增量同步思路
+- [Dawn11111/weread2notion-pro](https://github.com/Dawn11111/weread2notion-pro) - 微信读书新版接口组合、Cookie 处理参考
+- [MoonstoneF/WeRead2CraftCollection](https://github.com/MoonstoneF/WeRead2CraftCollection) - `/web/review/list` 等接口参数和请求方式参考
+- [openclaw/skills](https://github.com/openclaw/skills) - OpenClaw skill 结构与 WeRead 导出脚本参考
+
 ## 注意事项
 
 1. **Cookie 有效期**: `wr_skey` 会过期，需要定期更新
