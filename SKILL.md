@@ -24,13 +24,15 @@ Agent 被触发后**先静默执行 preflight**（不要列菜单、不要先问
 
 ### 初始化向导（分步执行，每一步等用户确认后再进下一步）
 
-**Step 1 · 登录**
+**Step 1 · 登录 + 接续初始化**
 - 提示用户：「首次使用需要扫码登录微信读书」
-- 跑 `python scripts/weread_auth.py --qr`，终端会渲染二维码 + 输出 PNG 路径
+- 跑 `python scripts/weread_init.py`
+- 这个向导会先完成扫码登录；扫码成功后不会停住，而是自动进入下一步继续配置 `output_dir`
+- 如果调用方已经知道输出目录，也可以直接跑 `python scripts/weread_init.py --output-dir <PATH>` 跳过提问
 - 失败则停在这一步报错，不要往下走
 
 **Step 2 · 配置输出目录**
-- 询问用户：「笔记导出到哪？默认 `~/Documents/weread`，回车采用默认，或直接告诉我别的路径」
+- 如果上一步没传 `--output-dir`，向导会直接继续问用户：「笔记导出到哪？默认 `~/Documents/weread`，回车采用默认，或直接告诉我别的路径」
 - 拿到路径后展开 `~`、写入 `config/weread.json` 的 `output_dir`，必要时 `mkdir -p`
 - 写完确认一下："输出目录已设为 X"
 
@@ -85,7 +87,7 @@ skill 在 `output/.state/synced.json` 维护每本书的 `sort` 和已同步的 
 
 ## 鉴权
 
-第一次跑前 `cp config/weread.json.template config/weread.json` 并填好 `output_dir`，然后跑一次 `python scripts/weread_auth.py --qr` 扫码登录。扫码时会同时输出终端 ASCII 二维码和 PNG 文件路径（含 `MEDIA:` 行），方便 Agent / Hermes 把二维码图片发回对话框。
+第一次推荐直接跑 `python scripts/weread_init.py`。这个初始化向导会先自动完成扫码登录，再继续配置 `output_dir`；如果你已经知道目录，也可以用 `python scripts/weread_init.py --output-dir <PATH>` 一步写好。只想单独重登时，再跑 `python scripts/weread_auth.py --qr`。扫码时会同时输出终端 ASCII 二维码和 PNG 文件路径（含 `MEDIA:` 行），方便 Agent / Hermes 把二维码图片发回对话框。
 
 之后每次导出会自动调微信读书的 `/web/login/renewal` 续期 `wr_skey`（30 分钟内会节流跳过），续期失败时自动转 QR 扫码。
 

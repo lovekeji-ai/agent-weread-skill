@@ -1,9 +1,11 @@
 import io
 import importlib.util
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "weread_auth.py"
@@ -48,6 +50,48 @@ class RenderQrTerminalTests(unittest.TestCase):
             self.assertIn("PNG 保存失败", output)
             self.assertIn("请用微信扫码登录", output)
             self.assertIn("https://example.com/qr-fallback", output)
+
+
+class QrLoginCompatTests(unittest.TestCase):
+    def test_qr_login_accepts_new_getinfo_shape_with_skey_vid_code(self):
+        class FakeResponse:
+            def __init__(self, payload):
+                self._payload = payload
+            def json(self):
+                return self._payload
+
+        class FakeSession:
+            def __init__(self):
+                self.headers = {}
+                self.calls = []
+            def post(self, url, json=None, timeout=None):
+                self.calls.append((url, json, timeout))
+                if url == weread_auth.GETUID_URL:
+                    return FakeResponse({'uid': 'u-1'})
+                if url == weread_auth.GETINFO_URL:
+                    return FakeResponse({'skey': 'new-skey', 'vid': 12345, 'code': 'abc'})
+                if url == weread_auth.SESSION_INIT_URL:
+                    return FakeResponse({'success': 1})
+                raise AssertionError(f'unexpected url: {url}')
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / 'weread.json'
+            config_path.write_text(json.dumps({'output_dir': tmpdir}), encoding='utf-8')
+            fake_session = FakeSession()
+
+            with patch.object(weread_auth.requests, 'Session', return_value=fake_session), \
+                 patch.object(weread_auth, '_render_qr_terminal', return_value=Path(tmpdir) / 'qr.png'), \
+                 patch.object(weread_auth.time, 'sleep', return_value=None):
+                ok = weread_auth.qr_login(config_path, timeout_seconds=1)
+
+            self.assertTrue(ok)
+            saved = json.loads(config_path.read_text(encoding='utf-8'))
+            self.assertEqual(saved['vid'], '12345')
+            self.assertEqual(saved['skey'], 'new-skey')
+            self.assertNotIn('rt', saved)
+            session_init_call = fake_session.calls[-1]
+            self.assertEqual(session_init_call[0], weread_auth.SESSION_INIT_URL)
+            self.assertEqual(session_init_call[1]['skey'], 'new-skey')
 
 
 if __name__ == "__main__":

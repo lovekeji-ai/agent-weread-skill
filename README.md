@@ -15,29 +15,31 @@
 
 把这个仓库放进你 Agent 的 skills 目录即可。它会被识别为名为 `agent-weread-skill` 的 skill（见 `SKILL.md`）。
 
-依赖只有两个 Python 包，Agent 第一次调用时会按 `SKILL.md` 里的声明自动装上：
+依赖会按 `SKILL.md` 里的声明自动装上：
 
 ```bash
-pip install requests beautifulsoup4
+pip install requests beautifulsoup4 qrcode Pillow
 ```
 
-## 一次性配置：登录
+## 一次性配置：初始化向导
 
-第一次用先建配置文件：
+第一次用直接运行初始化向导：
 
 ```bash
-cp config/weread.json.template config/weread.json
+python scripts/weread_init.py
 ```
 
-把 `output_dir` 改成你想要的输出目录；要同步到 Obsidian 就把 `sync_to_obsidian` 设为 `true` 并填 `obsidian_dir`。
+它会自动完成两步：
+1. 弹出扫码登录（终端 ASCII + PNG 二维码，方便 Agent / Hermes 直接发回对话框）
+2. 扫码成功后继续询问并写入 `output_dir`
 
-然后扫码登录一次（终端会渲染 QR，用微信扫一下；同时会生成一张 PNG 二维码，方便 Agent / Hermes 直接发回对话框）：
+如果你已经知道输出目录，也可以一次性带上：
 
 ```bash
-python scripts/weread_auth.py --qr
+python scripts/weread_init.py --output-dir ~/Documents/weread
 ```
 
-之后 `vid / skey / rt` 会自动写回 `config/weread.json`。
+初始化成功后，`vid / skey / rt` 和 `output_dir` 都会写回 `config/weread.json`。
 
 > 也可以从浏览器直接复制 `wr_vid / wr_skey / wr_rt` 三个 cookie 手填到配置里，但推荐扫码，省得过期了再翻一次 F12。
 

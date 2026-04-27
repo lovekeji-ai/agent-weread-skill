@@ -215,7 +215,7 @@ def qr_login(config_path: str | os.PathLike, timeout_seconds: int = 180) -> bool
             info = session.post(GETINFO_URL, json={"uid": uid}, timeout=10).json()
         except Exception:
             info = {}
-        if info.get("vid") and info.get("accessToken"):
+        if info.get("vid") and (info.get("accessToken") or info.get("skey")):
             break
         err = info.get("errCode") if isinstance(info, dict) else None
         if err in fatal_codes:
@@ -231,14 +231,15 @@ def qr_login(config_path: str | os.PathLike, timeout_seconds: int = 180) -> bool
     print("\n✅ 扫码确认成功，正在保存登录态…")
 
     vid = str(info["vid"])
-    skey = info["accessToken"]
+    skey = info.get("accessToken") or info.get("skey")
     rt = info.get("refreshToken", "")
+    code = info.get("code", "")
 
     # session/init 是网页端登录后的常规步骤，跑一下让服务端记录会话
     try:
         session.post(
             SESSION_INIT_URL,
-            json={"vid": vid, "pf": 0, "skey": skey, "rt": rt},
+            json={"vid": vid, "pf": 0, "skey": skey, "rt": rt, "code": code},
             timeout=10,
         )
     except Exception as exc:
